@@ -3,7 +3,7 @@ name: 'kapitan'
 description: 'kapitan compile action for github'
 runs:
   using: 'docker'
-  image: 'docker://deepmind/kapitan:ci'
+  image: 'docker://kapicorp/kapitan:latest'
 branding:
   icon: life-buoy
   color: red
