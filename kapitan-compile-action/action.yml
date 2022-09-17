@@ -1,9 +1,16 @@
 # action.yml
 name: 'kapitan'
 description: 'kapitan compile action for github'
+inputs:
+  command:
+    description: 'kapitan command to run'
+    required: true
+    default: 'compile'
 runs:
   using: 'docker'
   image: 'docker://kapicorp/kapitan:latest'
+  args:
+    - ${{ inputs.command }}
 branding:
   icon: life-buoy
   color: red
