@@ -1,5 +1,2 @@
 pymdown-extensions==9.8
 markdown-include==0.7.0
-mkdocs 
-mkdocs-material
-pymdown-extensions
