@@ -6,6 +6,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 "kapitan targets"
+import glob
+import itertools
 import json
 import logging
 import multiprocessing
@@ -824,18 +826,13 @@ def create_validate_mapping(target_objs, compiled_path):
         for validate_item in target_obj["validate"]:
             validate_type = validate_item["type"]
             if validate_type == "kubernetes":
-                kind_version_pair = (
-                    validate_item["kind"],
-                    validate_item.get("version", defaults.DEFAULT_KUBERNETES_VERSION),
-                )
+                version = validate_item.get("version", defaults.DEFAULT_KUBERNETES_VERSION)
                 for output_path in validate_item["output_paths"]:
                     full_output_path = os.path.join(compiled_path, target_name, output_path)
-                    if not os.path.isfile(full_output_path):
-                        logger.warning(
-                            "%s does not exist for target '%s'. skipping", output_path, target_name
-                        )
-                        continue
-                    validate_files_map[kind_version_pair].append(full_output_path)
+                    globbed_paths = glob.glob(full_output_path)
+                    # remove duplicate inputs
+                    files_to_validate = set(globbed_paths)
+                    validate_files_map[version].extend(files_to_validate)
             else:
                 logger.warning("type %s is not supported for validation. skipping", validate_type)
 
@@ -846,7 +843,7 @@ def schema_validate_kubernetes_output(validate_data, cache_dir):
     """
     validates given files according to kubernetes manifest schemas
     schemas are cached from/to cache_dir
-    validate_data must be of structure ((kind, version), validate_files)
+    validate_data must be of tuple (version, validate_files)
     """
-    (kind, version), validate_files = validate_data
-    KubernetesManifestValidator(cache_dir).validate(validate_files, kind=kind, version=version)
+    version, validate_files = validate_data
+    KubernetesManifestValidator(cache_dir).validate(validate_files, version=version)

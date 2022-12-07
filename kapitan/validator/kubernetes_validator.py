@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import glob
+import itertools
 import logging
 import os
 from functools import lru_cache
@@ -21,31 +23,36 @@ class KubernetesManifestValidator(Validator):
     def __init__(self, cache_dir, **kwargs):
         super().__init__(cache_dir, **kwargs)
 
-    def validate(self, validate_paths, **kwargs):
+    def validate(self, validate_files, **kwargs):
         """
-        validates manifests at validate_paths against json schema as specified by
-        'kind' and 'version' in kwargs.
+        validates manifests at validate_paths against json schema as specified by 'version' in kwargs.
         raises KubernetesManifestValidationError encountering the first validation error
         """
-        kind = kwargs.get("kind")
+
         version = kwargs.get("version", defaults.DEFAULT_KUBERNETES_VERSION)
-        schema = self._get_schema(kind, version)
-        validator = jsonschema.Draft4Validator(schema)
-        for validate_path in validate_paths:
-            if not os.path.isfile(validate_path):
-                logger.warning("%s does not exist. skipping", validate_path)
-                continue
-            with open(validate_path, "r") as fp:
-                validate_instance = yaml.safe_load(fp.read())
-                errors = sorted(validator.iter_errors(validate_instance), key=lambda e: e.path)
-                if errors:
-                    error_message = "invalid '{}' manifest at {}\n".format(kind, validate_path)
-                    error_message += "\n".join(
-                        ["{} {}".format(list(error.path), error.message) for error in errors]
+        validators = {}
+        for validate_file in validate_files:
+            logger.debug(f"Validation: processing file {validate_file}")
+            with open(validate_file, "r") as fp:
+                for validate_instance in yaml.safe_load_all(fp.read()):
+                    kind = validate_instance.get("kind")
+                    if kind is None:
+                        error_message = f"Loaded yaml document {validate_file} lacks `kind`"
+                        raise KubernetesManifestValidationError(error_message)
+                    logger.debug(f"Validation: detected kind {kind}")
+
+                    validator = validators.setdefault(
+                        kind, jsonschema.Draft4Validator(self._get_schema(kind, version))
                     )
-                    raise KubernetesManifestValidationError(error_message)
-                else:
-                    logger.info("Validation: manifest validation successful for %s", validate_path)
+                    errors = sorted(validator.iter_errors(validate_instance), key=lambda e: e.path)
+                    if errors:
+                        error_message = "invalid '{}' manifest at {}\n".format(kind, validate_file)
+                        error_message += "\n".join(
+                            ["{} {}".format(list(error.path), error.message) for error in errors]
+                        )
+                        raise KubernetesManifestValidationError(error_message)
+                    else:
+                        logger.debug("Validation: manifest validation successful for %s", validate_file)
 
     @lru_cache(maxsize=256)
     def _get_schema(self, kind, version):
