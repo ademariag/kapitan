@@ -58,10 +58,7 @@ class KubernetesValidatorTest(unittest.TestCase):
         manifest_path = os.path.join(self.cache_dir, "service_manifest.yaml")
         with open(manifest_path, "w") as fp:
             fp.write(service_manifest_string)
-        self.validator.validate([manifest_path], kind="service", version="1.14.0")
-
-        with self.assertRaises(KubernetesManifestValidationError):
-            self.validator.validate([manifest_path], kind="deployment", version="1.14.0")
+        self.validator.validate([manifest_path], version="1.14.0")
 
     def test_validate_command_pass(self):
         sys.argv = ["kapitan", "validate", "--schemas-path", self.cache_dir]
@@ -69,29 +66,6 @@ class KubernetesValidatorTest(unittest.TestCase):
             main()
         except SystemExit:
             self.fail("Kubernetes manifest validation error raised unexpectedly")
-
-    def test_validate_command_fail(self):
-        file_name_format = "inventory/classes/component/mysql{}.yml"
-        original_file = file_name_format.format("")
-        copied_file = file_name_format.format("_copy")
-        copyfile(original_file, copied_file)
-        wrong_manifest_kind = "deployment"
-        with open(original_file, "r") as fp:
-            d = yaml.safe_load(fp)
-            # change kind from service to deployment
-            d["parameters"]["kapitan"]["validate"][0]["kind"] = wrong_manifest_kind
-        with open(original_file, "w") as fp:
-            yaml.dump(d, fp, default_flow_style=False)
-
-        sys.argv = ["kapitan", "validate", "--schemas-path", self.cache_dir]
-        with self.assertRaises(SystemExit), self.assertLogs(logger="kapitan.targets", level="ERROR") as log:
-            try:
-                main()
-            finally:
-                # copy back the original file
-                copyfile(copied_file, original_file)
-                os.remove(copied_file)
-        self.assertTrue(" ".join(log.output).find("invalid '{}' manifest".format(wrong_manifest_kind)) != -1)
 
     def test_validate_after_compile(self):
         sys.argv = [
