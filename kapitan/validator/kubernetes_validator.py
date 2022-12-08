@@ -2,8 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import glob
-import itertools
 import logging
 import os
 from functools import lru_cache
@@ -31,14 +29,34 @@ class KubernetesManifestValidator(Validator):
 
         version = kwargs.get("version", defaults.DEFAULT_KUBERNETES_VERSION)
         validators = {}
+        fail_on_error = kwargs.get("fail_on_error", False) 
+        ignores = kwargs.get("ignore", {})
+        ignored_kinds = ignores.get("kinds", defaults.DEFAULT_IGNORED_KINDS)
+        logger.debug(f"Ignore configuration: {ignores}")
+        ignored_files = ignores.get("files", [])
         for validate_file in validate_files:
+            if validate_files in ignored_files:
+              logger.debug(f"Validation: skipping file {validate_file} because of ignore.files")
+              continue
+                
             logger.debug(f"Validation: processing file {validate_file}")
             with open(validate_file, "r") as fp:
                 for validate_instance in yaml.safe_load_all(fp.read()):
                     kind = validate_instance.get("kind")
+                    try:
+                        annotation_ignore_validation = validate_instance.metadata.annotations.get(defaults.VALIDATION_IGNORE_ANNOTATION)
+                        if annotation_ignore_validation:
+                            continue
+                    except AttributeError:
+                        pass
+                        
                     if kind is None:
                         error_message = f"Loaded yaml document {validate_file} lacks `kind`"
                         raise KubernetesManifestValidationError(error_message)
+                    elif kind in ignored_kinds:
+                        logger.debug(f"Validation: skipping kind {kind} inside {validate_file} because of ignore.kinds")
+                        continue
+                    
                     logger.debug(f"Validation: detected kind {kind}")
 
                     validator = validators.setdefault(
@@ -50,7 +68,10 @@ class KubernetesManifestValidator(Validator):
                         error_message += "\n".join(
                             ["{} {}".format(list(error.path), error.message) for error in errors]
                         )
-                        raise KubernetesManifestValidationError(error_message)
+                        if fail_on_error:
+                            raise KubernetesManifestValidationError(error_message)
+                        else:
+                            logger.info(error_message)
                     else:
                         logger.debug("Validation: manifest validation successful for %s", validate_file)
 

@@ -192,6 +192,7 @@ def compile_targets(
             worker = partial(
                 schema_validate_kubernetes_output,
                 cache_dir=kwargs.get("schemas_path", "./schemas"),
+                kwargs=kwargs.get("validate", {})
             )
             [p.get() for p in pool.imap_unordered(worker, validate_map.items()) if p]
 
@@ -762,7 +763,7 @@ def schema_validate_compiled(args):
         os.makedirs(args.schemas_path)
         logger.info("created schema-cache-path at %s", args.schemas_path)
 
-    worker = partial(schema_validate_kubernetes_output, cache_dir=args.schemas_path)
+    worker = partial(schema_validate_kubernetes_output, cache_dir=args.schemas_path, **args)
     pool = multiprocessing.Pool(args.parallelism)
 
     try:
@@ -824,11 +825,11 @@ def create_validate_mapping(target_objs, compiled_path):
     return validate_files_map
 
 
-def schema_validate_kubernetes_output(validate_data, cache_dir):
+def schema_validate_kubernetes_output(validate_data, cache_dir, **kwargs):
     """
     validates given files according to kubernetes manifest schemas
     schemas are cached from/to cache_dir
     validate_data must be of tuple (version, validate_files)
     """
     version, validate_files = validate_data
-    KubernetesManifestValidator(cache_dir).validate(validate_files, version=version)
+    KubernetesManifestValidator(cache_dir).validate(validate_files, **kwargs)
