@@ -629,21 +629,6 @@ def valid_target_obj(target_obj, require_compile=True):
                     },
                     "required": ["output_paths", "type"],
                     "minItems": 1,
-                    "allOf": [
-                        {
-                            "if": {"properties": {"type": {"const": "kubernetes"}}},
-                            "then": {
-                                "properties": {
-                                    "type": {},
-                                    "kind": {},
-                                    "output_paths": {},
-                                    "version": {},
-                                },
-                                "additionalProperties": False,
-                                "required": ["kind"],
-                            },
-                        },
-                    ],
                 },
             },
             "dependencies": {
