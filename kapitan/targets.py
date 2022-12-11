@@ -188,11 +188,10 @@ def compile_targets(
 
         # validate the compiled outputs
         if kwargs.get("validate", False):
-            validation_start = time.time() 
+            validation_start = time.time()
             validate_map = create_validate_mapping(target_objs, compile_path)
             worker = partial(
-                schema_validate_kubernetes_output,
-                cache_dir=kwargs.get("schemas_path", "./schemas")
+                schema_validate_kubernetes_output, cache_dir=kwargs.get("schemas_path", "./schemas")
             )
             [p.get() for p in pool.imap_unordered(worker, validate_map.items()) if p]
             logger.info("Validated targets (%.2fs)", time.time() - validation_start)
@@ -811,7 +810,7 @@ def create_validate_mapping(target_objs, compiled_path):
             continue
 
         for validate_item in target_obj["validate"]:
-            validate_item["target_name"] = target_name 
+            validate_item["target_name"] = target_name
             validate_type = validate_item["type"]
             if validate_type == "kubernetes":
                 version = validate_item.setdefault("version", defaults.DEFAULT_KUBERNETES_VERSION)
@@ -826,16 +825,12 @@ def create_validate_mapping(target_objs, compiled_path):
                 for ignore_file_path in validate_item["exclude"]["files"]:
                     full_path = os.path.join(compiled_path, target_name, ignore_file_path)
                     excluded_files.update(set(glob.glob(full_path)))
-                
+
                 if files.intersection(excluded_files):
-                    logging.debug(
-                        f"Validation: Removing files because of exclude.files: {excluded_files}"
-                    )
+                    logging.debug(f"Validation: Removing files because of exclude.files: {excluded_files}")
                     files.difference_update(excluded_files)
-                    
-                logging.debug(
-                    f"Validation: Final validation file list after exclude.files: {files}"
-                )
+
+                logging.debug(f"Validation: Final validation file list after exclude.files: {files}")
                 validate_item["output_files"] = files
                 validate_item["excluded_files"] = excluded_files
                 validate_files_map[version].append(validate_item)

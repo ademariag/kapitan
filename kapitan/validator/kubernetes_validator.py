@@ -29,13 +29,13 @@ class KubernetesManifestValidator(Validator):
         exclusions = []
 
         validate_files = config["output_files"]
-        excluded_files = config["excluded_files"] 
+        excluded_files = config["excluded_files"]
 
         exclude_config = config.get("exclude", {})
         # exclude.files are already removed by create_validate_mapping
         exclusions = [f"Validation: excluded file {file} because of ignore.files" for file in excluded_files]
         logger.debug(f"Ignore configuration: {exclude_config}")
-        excluded_kinds = exclude_config.get("kinds", defaults.DEFAULT_IGNORED_KINDS)
+        excluded_kinds = exclude_config.get("kinds", [])
 
         for validate_file in validate_files:
 
@@ -68,17 +68,22 @@ class KubernetesManifestValidator(Validator):
                                 f"Validation: skipping kind:name {kind}:{name} inside {validate_file} because of ignore annotation"
                             )
                             continue
-                    except Exception:
+                    except AttributeError:
+                        # Silently ignoring if annotation is not found
                         pass
-                    validator = validators_kind_cache.setdefault(
-                        kind, jsonschema.Draft4Validator(self._get_schema(kind, version))
-                    )
+
+                    try:
+                        validator = validators_kind_cache.setdefault(
+                            kind, jsonschema.Draft4Validator(self._get_schema(kind, version))
+                        )
+                    except RequestUnsuccessfulError as e:
+                        exclusions.append(str(e))
+                        logging.debug(str(e))
+                        continue
 
                     errors = sorted(validator.iter_errors(validate_instance), key=lambda e: e.path)
                     if errors:
-                        error_message = "invalid '{}' manifest at {}\n".format(
-                            kind, validate_file
-                        )
+                        error_message = "invalid '{}' manifest at {}\n".format(kind, validate_file)
                         error_message += "\n".join(
                             ["{} {}".format(list(error.path), error.message) for error in errors]
                         )
@@ -101,12 +106,12 @@ class KubernetesManifestValidator(Validator):
         errors = []
         exclusions = []
         for config in configs:
-            message = f"Validated {config['target_name']} " 
+            message = f"Validated {config['target_name']} "
             validate_files, errors, exclusions = self._validate_config_block(config)
 
             if errors:
                 message += "FAIL"
-                error_message = "" 
+                error_message = ""
                 for error in errors:
                     error_message += error
 
@@ -114,12 +119,12 @@ class KubernetesManifestValidator(Validator):
                 if config.get("fail_on_error", False):
                     raise KubernetesManifestValidationError(error_message)
                 else:
-                    logger.info(error_message) 
+                    logger.info(error_message)
             else:
-                message += "OK" 
+                message += "OK"
                 if exclusions:
                     message += f" (with {len(exclusions)} exclusion/s)"
-                    
+
                 if validate_files:
                     # we only print success if there were actually files being evaluated
                     logger.info(message)
@@ -147,18 +152,30 @@ class KubernetesManifestValidator(Validator):
         else:
             return None
 
-    def _get_schema_from_web(self, kind, version):
-        url = self._get_request_url(kind, version)
-        logger.debug("Validation: fetching schema from %s", url)
+    @lru_cache(maxsize=256)
+    def _schema_exists(self, version):
+        url = self._get_request_url("all", version)
+        logger.debug("Validation: checking if schema exists by querying well known path %s", url)
         try:
-            content, _ = make_request(url)
+            _, _ = make_request(url)
         except requests.exceptions.HTTPError:
-            raise RequestUnsuccessfulError(
-                "Validation: schema failed to fetch from {}"
-                "\nThe specified version '{}' or kind '{}' may not be supported".format(url, version, kind)
-            )
-        logger.debug("Validation: schema fetched  from %s", url)
-        return yaml.safe_load(content)
+            logger.debug("Validation: schema does not exist or could not fetch well known path %s", url)
+            return False
+        return True
+
+    def _get_schema_from_web(self, kind, version):
+        if self._schema_exists(version):
+            url = self._get_request_url(kind, version)
+            logger.debug("Validation: fetching schema from %s", url)
+            try:
+                content, _ = make_request(url)
+            except requests.exceptions.HTTPError:
+                raise RequestUnsuccessfulError(
+                    "Validation: schema failed to fetch from {}: "
+                    "silently ignoring unsupported kind '{}'.".format(url, kind)
+                )
+            logger.debug("Validation: schema fetched from %s", url)
+            return yaml.safe_load(content)
 
     def _get_request_url(self, kind, version):
         return "https://kubernetesjsonschema.dev/" + defaults.FILE_PATH_FORMAT.format(version, kind)

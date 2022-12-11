@@ -19,5 +19,4 @@ FILE_PATH_FORMAT = "v{}-%s/{}.json" % SCHEMA_TYPE
 # default path from where user defined custom filters are read
 DEFAULT_JINJA2_FILTERS_PATH = os.path.join("lib", "jinja2_filters.py")
 
-DEFAULT_IGNORED_KINDS = ["CustomResourceDefinition"]
 VALIDATION_IGNORE_ANNOTATION = "validation.kapicorp.com/enabled"
