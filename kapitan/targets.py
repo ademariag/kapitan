@@ -188,13 +188,14 @@ def compile_targets(
 
         # validate the compiled outputs
         if kwargs.get("validate", False):
+            validation_start = time.time() 
             validate_map = create_validate_mapping(target_objs, compile_path)
             worker = partial(
                 schema_validate_kubernetes_output,
-                cache_dir=kwargs.get("schemas_path", "./schemas"),
-                kwargs=kwargs.get("validate", {})
+                cache_dir=kwargs.get("schemas_path", "./schemas")
             )
             [p.get() for p in pool.imap_unordered(worker, validate_map.items()) if p]
+            logger.info("Validated targets (%.2fs)", time.time() - validation_start)
 
         # Save inventory and folders cache
         save_inv_cache(compile_path, targets)
@@ -763,7 +764,7 @@ def schema_validate_compiled(args):
         os.makedirs(args.schemas_path)
         logger.info("created schema-cache-path at %s", args.schemas_path)
 
-    worker = partial(schema_validate_kubernetes_output, cache_dir=args.schemas_path, **args)
+    worker = partial(schema_validate_kubernetes_output, cache_dir=args.schemas_path)
     pool = multiprocessing.Pool(args.parallelism)
 
     try:
@@ -810,15 +811,35 @@ def create_validate_mapping(target_objs, compiled_path):
             continue
 
         for validate_item in target_obj["validate"]:
+            validate_item["target_name"] = target_name 
             validate_type = validate_item["type"]
             if validate_type == "kubernetes":
-                version = validate_item.get("version", defaults.DEFAULT_KUBERNETES_VERSION)
+                version = validate_item.setdefault("version", defaults.DEFAULT_KUBERNETES_VERSION)
+                files = set()
+                excluded_files = set()
                 for output_path in validate_item["output_paths"]:
-                    full_output_path = os.path.join(compiled_path, target_name, output_path)
-                    globbed_paths = glob.glob(full_output_path)
-                    # remove duplicate inputs
-                    files_to_validate = set(globbed_paths)
-                    validate_files_map[version].extend(files_to_validate)
+                    full_path = os.path.join(compiled_path, target_name, output_path)
+                    globbed_files = glob.glob(full_path)
+                    # remove duplicate
+                    files.update(set(globbed_files))
+
+                for ignore_file_path in validate_item["exclude"]["files"]:
+                    full_path = os.path.join(compiled_path, target_name, ignore_file_path)
+                    excluded_files.update(set(glob.glob(full_path)))
+                
+                if files.intersection(excluded_files):
+                    logging.debug(
+                        f"Validation: Removing files because of exclude.files: {excluded_files}"
+                    )
+                    files.difference_update(excluded_files)
+                    
+                logging.debug(
+                    f"Validation: Final validation file list after exclude.files: {files}"
+                )
+                validate_item["output_files"] = files
+                validate_item["excluded_files"] = excluded_files
+                validate_files_map[version].append(validate_item)
+
             else:
                 logger.warning("type %s is not supported for validation. skipping", validate_type)
 
@@ -831,5 +852,4 @@ def schema_validate_kubernetes_output(validate_data, cache_dir, **kwargs):
     schemas are cached from/to cache_dir
     validate_data must be of tuple (version, validate_files)
     """
-    version, validate_files = validate_data
-    KubernetesManifestValidator(cache_dir).validate(validate_files, **kwargs)
+    KubernetesManifestValidator(cache_dir).validate(validate_data, **kwargs)
