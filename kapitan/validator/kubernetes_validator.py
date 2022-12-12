@@ -127,7 +127,7 @@ class KubernetesManifestValidator(Validator):
 
                 if validate_files:
                     # we only print success if there were actually files being evaluated
-                    logger.info(message)
+                    logger.debug(message)
 
     @lru_cache(maxsize=256)
     def _get_schema(self, kind, version):
