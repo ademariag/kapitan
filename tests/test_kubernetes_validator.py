@@ -14,32 +14,9 @@ from kapitan import defaults
 from kapitan.cached import reset_cache
 from kapitan.cli import main
 from kapitan.validator.kubernetes_validator import KubernetesManifestValidator
+from kapitan.errors import KubernetesManifestValidationError
 
-
-class KubernetesValidatorTest(unittest.TestCase):
-    def setUp(self):
-        os.chdir(os.path.join("examples", "kubernetes"))
-        self.cache_dir = tempfile.mkdtemp()
-        self.validator = KubernetesManifestValidator(self.cache_dir)
-
-    def test_download_and_cache(self):
-        kind = "service"
-        version = "1.14.0"
-        downloaded_schema = self.validator._get_schema_from_web(kind, version)
-        self.validator._cache_schema(kind, version, downloaded_schema)
-        self.assertTrue(
-            os.path.isfile(os.path.join(self.cache_dir, defaults.FILE_PATH_FORMAT.format(version, kind)))
-        )
-
-    def test_load_from_cache(self):
-        kind = "deployment"
-        version = "1.11.0"  # different version just for testing
-        downloaded_schema = self.validator._get_schema_from_web(kind, version)
-        self.validator._cache_schema(kind, version, downloaded_schema)
-        self.assertIsInstance(self.validator._get_cached_schema(kind, version), dict)
-
-    def test_validate(self):
-        service_manifest_string = """
+VALID_MANIFEST = """
             apiVersion: v1
             kind: Service
             metadata:
@@ -52,10 +29,130 @@ class KubernetesValidatorTest(unittest.TestCase):
                 port: 80
                 targetPort: 9376
         """
-        manifest_path = os.path.join(self.cache_dir, "service_manifest.yaml")
+
+INVALID_MANIFEST = """
+            apiVersion: v1
+            kind: Service
+            metadata:
+              invalid: my-service
+            spec:
+              selector:
+                app: MyApp
+              ports:
+              - protocol: TCP
+                port: 80
+                targetPort: 9376
+        """
+
+INVALID_WITH_ANNOTATION = """
+            apiVersion: v1
+            kind: Service
+            metadata:
+              invalid: my-service
+              annotations:
+                validation.kapicorp.com/enabled: "false"
+            spec:
+              selector:
+                app: MyApp
+              ports:
+              - protocol: TCP
+                port: 80
+                targetPort: 9376
+        """
+
+INVALID_WITH_ANNOTATION_TRUE = """
+            apiVersion: v1
+            kind: Service
+            metadata:
+              invalid: my-service
+              annotations:
+                validation.kapicorp.com/enabled: "true"
+            spec:
+              selector:
+                app: MyApp
+              ports:
+              - protocol: TCP
+                port: 80
+                targetPort: 9376
+        """
+
+class KubernetesValidatorTest(unittest.TestCase):
+    def setUp(self):
+        os.chdir(os.path.join("examples", "kubernetes"))
+        self.cache_dir = tempfile.mkdtemp()
+        self.validator = KubernetesManifestValidator(self.cache_dir)
+
+    def test_download_and_cache(self):
+        kind = "service"
+        version = "1.26.0"
+        downloaded_schema = self.validator._get_schema_from_web(kind, version)
+        self.validator._cache_schema(kind, version, downloaded_schema)
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.cache_dir, defaults.FILE_PATH_FORMAT.format(version, kind)))
+        )
+
+    def test_load_from_cache(self):
+        kind = "deployment"
+        version = "1.25.0"  # different version just for testing
+        downloaded_schema = self.validator._get_schema_from_web(kind, version)
+        self.validator._cache_schema(kind, version, downloaded_schema)
+        self.assertIsInstance(self.validator._get_cached_schema(kind, version), dict)
+
+    def _get_manifest(self, manifest, filename):
+        manifest_path = os.path.join(self.cache_dir, filename)
         with open(manifest_path, "w") as fp:
-            fp.write(service_manifest_string)
-        self.validator.validate([manifest_path], version="1.14.0")
+            fp.write(manifest)
+        return manifest_path
+
+    def test_validate(self):
+        # None of these should fail
+        _VALID = self._get_manifest(VALID_MANIFEST, "service_manifest.yaml")
+        _INVALID = self._get_manifest(INVALID_MANIFEST, "service_manifest_invalid.yaml")
+        _INVALID_EXCLUDE_KIND = self._get_manifest(INVALID_MANIFEST, "service_manifest_exclude_kind.yaml")
+        _INVALID_EXCLUDE_PATH = self._get_manifest(INVALID_MANIFEST, "service_manifest_exclude_path.yaml")
+        _INVALID_W_ANNOTATION = self._get_manifest(INVALID_WITH_ANNOTATION, "service_manifest_annotated.yaml")
+
+        basic_config = {"target_name": "test_validate", "version": "1.26.0"}
+        validate_objects = list()
+        validate_objects += [{"output_files": [_VALID]} | basic_config]
+        validate_objects += [{"output_files": [_INVALID], "fail_on_error": False} | basic_config]
+        validate_objects += [
+            {"output_files": [_INVALID_EXCLUDE_KIND], "exclude": {"kinds": ["Service"]}} | basic_config
+        ]
+        validate_objects += [
+            {"output_files": [_INVALID_EXCLUDE_PATH], "excluded_files": [_INVALID_EXCLUDE_PATH]}
+            | basic_config
+        ]
+        validate_objects += [{"output_files": [_INVALID_W_ANNOTATION]} | basic_config]
+        self.validator.validate(("1.26.0", validate_objects))
+
+    def test_validate_failure(self):
+        # None of these should fail
+        _INVALID = self._get_manifest(INVALID_MANIFEST, "service_manifest_invalid.yaml")
+        _INVALID_EXCLUDE_KIND = self._get_manifest(INVALID_MANIFEST, "service_manifest_exclude_kind.yaml")
+        _INVALID_EXCLUDE_PATH = self._get_manifest(INVALID_MANIFEST, "service_manifest_exclude_path.yaml")
+        _INVALID_W_ANNOTATION_TRUE = self._get_manifest(INVALID_WITH_ANNOTATION_TRUE, "service_manifest_annotated.yaml")
+
+        basic_config = {"target_name": "test_validate", "version": "1.26.0"}
+
+        validate_objects = [{"output_files": [_INVALID]} | basic_config]
+        self.assertRaises(KubernetesManifestValidationError, self.validator.validate, ("1.26.0", validate_objects))
+
+        validate_objects = [
+            {"output_files": [_INVALID_EXCLUDE_KIND], "exclude": {"kinds": ["Deployment"]}} | basic_config
+        ]
+        self.assertRaises(KubernetesManifestValidationError, self.validator.validate, ("1.26.0", validate_objects))
+        
+        validate_objects = [
+            {"output_files": [_INVALID_EXCLUDE_PATH], "excluded_files": ["another_path"]}
+            | basic_config
+        ]
+        self.assertRaises(KubernetesManifestValidationError, self.validator.validate, ("1.26.0", validate_objects))
+        
+        validate_objects = [{"output_files": [_INVALID_W_ANNOTATION_TRUE]} | basic_config]
+        self.assertRaises(KubernetesManifestValidationError, self.validator.validate, ("1.26.0", validate_objects))
+        
+
 
     def test_validate_command_pass(self):
         sys.argv = ["kapitan", "validate", "--schemas-path", self.cache_dir]

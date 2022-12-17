@@ -28,8 +28,8 @@ class KubernetesManifestValidator(Validator):
         error_messages = []
         exclusions = []
 
-        validate_files = config["output_files"]
-        excluded_files = config["excluded_files"]
+        validate_files = config.get("output_files", [])
+        excluded_files = config.get("excluded_files", [])
 
         exclude_config = config.get("exclude", {})
         # exclude.files are already removed by create_validate_mapping
@@ -38,6 +38,9 @@ class KubernetesManifestValidator(Validator):
         excluded_kinds = exclude_config.get("kinds", [])
 
         for validate_file in validate_files:
+            if validate_file in excluded_files:
+                exclusions.append(f"Validation: skipping {validate_file} because of exclude.paths")
+                continue
 
             logger.debug(f"Validation: validating file {validate_file}")
             with open(validate_file, "r") as fp:
@@ -58,23 +61,20 @@ class KubernetesManifestValidator(Validator):
                         continue
 
                     # Evaluating annotation
-                    try:
-                        annotation_ignore_validation = validate_instance.metadata.annotations.get(
-                            defaults.VALIDATION_IGNORE_ANNOTATION
+                    validation_enabled_annotation = (
+                        validate_instance.get("metadata", {})
+                        .get("annotations", {})
+                        .get(defaults.VALIDATION_ENABLED_ANNOTATION, "true")
+                    )
+                    if validation_enabled_annotation.lower() in ["false", "disabled"]:
+                        exclusions.append(
+                            f"Validation: skipping kind {kind} inside {validate_file} because of ignore annotation"
                         )
-                        if annotation_ignore_validation:
-                            name = validate_instance.metadata.name
-                            exclusions.append(
-                                f"Validation: skipping kind:name {kind}:{name} inside {validate_file} because of ignore annotation"
-                            )
-                            continue
-                    except AttributeError:
-                        # Silently ignoring if annotation is not found
-                        pass
+                        continue
 
                     try:
                         validator = validators_kind_cache.setdefault(
-                            kind, jsonschema.Draft4Validator(self._get_schema(kind, version))
+                            kind, jsonschema.Draft4Validator(self._get_schema(kind.lower(), version))
                         )
                     except RequestUnsuccessfulError as e:
                         exclusions.append(str(e))
@@ -83,10 +83,11 @@ class KubernetesManifestValidator(Validator):
 
                     errors = sorted(validator.iter_errors(validate_instance), key=lambda e: e.path)
                     if errors:
-                        error_message = "invalid '{}' manifest at {}\n".format(kind, validate_file)
+                        error_message = "INVALID [{}]: manifest {}\n".format(kind, validate_file)
                         error_message += "\n".join(
-                            ["{} {}".format(list(error.path), error.message) for error in errors]
+                            ["---> ERROR {}: {}".format(list(error.path), error.message) for error in errors]
                         )
+                        error_message += "\n"
                         logger.debug(error_message)
 
                         error_messages.append(error_message)
@@ -105,7 +106,10 @@ class KubernetesManifestValidator(Validator):
         _, configs = validate_configs
         errors = []
         exclusions = []
+
         for config in configs:
+            verbose = config.get("verbose", False)
+            fail_on_error = config.get("fail_on_error", True)
             message = f"Validated {config['target_name']} "
             validate_files, errors, exclusions = self._validate_config_block(config)
 
@@ -116,7 +120,7 @@ class KubernetesManifestValidator(Validator):
                     error_message += error
 
                 logger.info(message)
-                if config.get("fail_on_error", False):
+                if fail_on_error:
                     raise KubernetesManifestValidationError(error_message)
                 else:
                     logger.info(error_message)
@@ -127,7 +131,10 @@ class KubernetesManifestValidator(Validator):
 
                 if validate_files:
                     # we only print success if there were actually files being evaluated
-                    logger.debug(message)
+                    if verbose:
+                        logger.info(message)
+                    else:
+                        logger.debug(message)
 
     @lru_cache(maxsize=256)
     def _get_schema(self, kind, version):
@@ -178,7 +185,7 @@ class KubernetesManifestValidator(Validator):
             return yaml.safe_load(content)
 
     def _get_request_url(self, kind, version):
-        return "https://kubernetesjsonschema.dev/" + defaults.FILE_PATH_FORMAT.format(version, kind)
+        return defaults.KUBERNETES_JSON_SCHEMA_URL + defaults.FILE_PATH_FORMAT.format(version, kind)
 
     def _get_cache_path(self, kind, version):
         return os.path.join(self.cache_dir, defaults.FILE_PATH_FORMAT.format(version, kind))

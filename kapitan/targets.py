@@ -625,8 +625,14 @@ def valid_target_obj(target_obj, require_compile=True):
                     "properties": {
                         "output_paths": {"type": "array"},
                         "type": {"type": "string", "enum": ["kubernetes"]},
-                        "kind": {"type": "string"},
-                        "version": {"type": "string"},
+                        "ignore": {
+                            "type": "object",
+                            "properties": {"kinds": {"type": "array"}, "paths": {"type": "array"}},
+                            "minItems": 1,
+                        },
+                        "verbose": {"type": "boolean"},
+                        "fail_on_error": {"type": "boolean"},
+                        "version": {"type": "string", "pattern": "^[1-9]?[0-9][.][1-9]?[0-9][.][1-9]?[0-9]$"},
                     },
                     "required": ["output_paths", "type"],
                     "minItems": 1,
@@ -822,12 +828,12 @@ def create_validate_mapping(target_objs, compiled_path):
                     # remove duplicate
                     files.update(set(globbed_files))
 
-                for ignore_file_path in validate_item["exclude"]["files"]:
+                for ignore_file_path in validate_item["exclude"]["paths"]:
                     full_path = os.path.join(compiled_path, target_name, ignore_file_path)
                     excluded_files.update(set(glob.glob(full_path)))
 
                 if files.intersection(excluded_files):
-                    logging.debug(f"Validation: Removing files because of exclude.files: {excluded_files}")
+                    logging.debug(f"Validation: Removing files because of exclude.paths: {excluded_files}")
                     files.difference_update(excluded_files)
 
                 logging.debug(f"Validation: Final validation file list after exclude.files: {files}")
