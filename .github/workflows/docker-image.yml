@@ -1,10 +1,10 @@
 ---
 name: Docker Build and Push
-run-name: Docker Build for ${{ github.actor }} on branch ${{ github.ref }}
+run-name: Docker Build for ${{ github.actor }} on branch ${{ github.ref_name }}
 
 # https://docs.github.com/en/actions/using-jobs/using-concurrency#example-only-cancel-in-progress-jobs-or-runs-for-the-current-workflow
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.ref_name }}
   cancel-in-progress: true
 
 on:
@@ -51,7 +51,6 @@ jobs:
           # list of Docker images to use as base name for tags
           images: |
             name=${{ env.DOCKERHUB_USERNAME }}/kapitan,enable=${{env.DOCKERHUB_USERNAME != null}}
-            local-test
           # generate Docker tags based on the following events/attributes
           tags: |
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -61,13 +60,26 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
 
+
+      # Build both architectures but does not push, to allow for testing
       - name: build Kapitan Image
         uses: docker/build-push-action@v4
         with:
-          load: true
+          platforms: linux/amd64,linux/arm64
           push: False 
           file: Dockerfile
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: local-cache
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Builds again (caching is enabled) and load one platform to allow testing
+      - name: build Kapitan Image
+        uses: docker/build-push-action@v4
+        with:
+          push: False 
+          file: Dockerfile
+          tags: local-test
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -76,6 +88,8 @@ jobs:
         run: |
           docker run -t --rm local-test --version
 
+
+      # Finally can push
       - name: Push Kapitan Image
         uses: docker/build-push-action@v4
         env:
