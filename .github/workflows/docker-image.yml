@@ -1,5 +1,5 @@
 ---
-name: Docker Build and Push
+name: Docker Build
 run-name: Docker Build for ${{ github.actor }} on branch ${{ github.ref_name }}
 
 # https://docs.github.com/en/actions/using-jobs/using-concurrency#example-only-cancel-in-progress-jobs-or-runs-for-the-current-workflow
@@ -7,17 +7,97 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.workflow_run.ref_name }}
   cancel-in-progress: true
 
-on:
-  workflow_run:
-    workflows:
-      - Python Tests
-    types:
-      - completed
+on: 
+  push:
+    branches:
+      - master
+      - main
+      - test/*
+    paths-ignore:
+      - 'docs/**'
+
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    if: success() || failure()  # Continue running if other jobs fail
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - uses: psf/black@main
+  
+  test:
+    runs-on: ubuntu-latest
+    if: success() || failure()   # Continue running if other jobs fail
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9]
+
+    steps:
+      - name: Checkout kapitan recursively
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          cache: 'pip'
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Install testing dependencies
+        run: |
+          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 762E3157
+          sudo apt-get -qq update
+          sudo apt-get install -y gnupg2 git curl
+          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
+          chmod 700 get_helm.sh
+          sudo ./get_helm.sh
+          pip3 install --editable ".[test]"
+          pip3 install coverage black
+      - name: Run tests
+        run: |-
+          make test && make test_coverage
+
   build:
-    # Only starts if Python tests were successful
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: success() || failure()   # Continue running if other jobs fail
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kapitan recursively
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      # Setup QEMU and Buildx to build multi-platform image
+      # This was inspired by this example : https://docs.docker.com/build/ci/github-actions/examples/#multi-platform-images
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # Builds again (caching is enabled) and load one platform to allow testing
+      - name: build Kapitan Image
+        uses: docker/build-push-action@v4
+        with:
+          push: False 
+          load: True
+          file: Dockerfile
+          tags: local-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test Kapitan
+        run: |
+          docker run -t --rm local-test --version
+
+  push:
+    # Only starts if everything else is successful
+    needs: [lint, test, build]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout kapitan recursively
@@ -60,36 +140,6 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
 
-
-      # Build both architectures but does not push, to allow for testing
-      - name: build Kapitan Image
-        uses: docker/build-push-action@v4
-        with:
-          platforms: linux/amd64,linux/arm64
-          push: False 
-          file: Dockerfile
-          tags: local-cache
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # Builds again (caching is enabled) and load one platform to allow testing
-      - name: build Kapitan Image
-        uses: docker/build-push-action@v4
-        with:
-          push: False 
-          file: Dockerfile
-          tags: local-test
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Test Kapitan
-        run: |
-          docker run -t --rm local-test --version
-
-
-      # Finally can push
       - name: Push Kapitan Image
         uses: docker/build-push-action@v4
         env:
