@@ -32,7 +32,7 @@ class Inventory(ABC):
         self.initialised: bool = False
         self.targets: dict[str, InventoryTarget] = {}
         
-        self.__initialise(ignore_class_notfound=ignore_class_notfound)
+        self.__initialise(ignore_class_not_found=ignore_class_notfound)
         
     @property
     def inventory(self) -> dict:
@@ -42,10 +42,11 @@ class Inventory(ABC):
 
         return self.targets
 
-    def __initialise(self, ignore_class_notfound) -> bool:
+    def __initialise(self, ignore_class_not_found) -> bool:
         """
         look for targets at '<inventory_path>/targets/' and initialise them.
         """
+        logger.debug(f"Initialising inventory from {self.targets_path}")
         if not self.initialised:
             for root, dirs, files in os.walk(self.targets_path):
                 for file in files:
@@ -72,7 +73,7 @@ class Inventory(ABC):
                     
                     self.targets[target.name] = target
                     
-            self.render_targets(self.targets, ignore_class_notfound=ignore_class_notfound)
+            self.render_targets(self.targets, ignore_class_not_found=ignore_class_not_found)
             self.initialised = True
         return self.initialised
 
@@ -103,7 +104,7 @@ class Inventory(ABC):
         return {name: target.parameters for name, target in self.get_targets(target_names)}
 
     @abstractmethod
-    def render_targets(self, targets: list[InventoryTarget] = None, ignore_class_notfound: bool = False) -> None:
+    def render_targets(self, targets: list[InventoryTarget] = None, ignore_class_not_found: bool = False) -> None:
         """
         create the inventory depending on which backend gets used
         """
